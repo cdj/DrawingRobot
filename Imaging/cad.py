@@ -20,6 +20,7 @@ from Tkinter import *
 from tkFileDialog import *
 import Image, ImageTk, ImageDraw, ImageFont, ImageOps
 import os, struct
+import cv
 #import time
 
 class point:
@@ -3839,7 +3840,17 @@ if len(sys.argv) == 2:
       string_msg.set("unsupported input file format")
       root.update()
 else:
-   widget_cad_text.insert("1.0",cad_template)
+   # widget_cad_text.insert("1.0",cad_template)
+   # cv.NamedWindow("w1", cv.CV_WINDOW_AUTOSIZE)
+   capture = cv.CaptureFromCAM(2)
+   frame = cv.QueryFrame(capture)
+   # cv.ShowImage("w1", frame)
+   imageName = "pic.jpg"
+   cv.SaveImage(imageName, frame)
+   string_input_file.set(imageName)
+   # cv.DestroyAllWindows()
+   widget_cad_text.delete("1.0",END)
+   image_load(0)
 
 #
 # start GUI
