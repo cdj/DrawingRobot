@@ -8,8 +8,10 @@
 # Permission granted for experimental and personal use;
 # license for commercial sale available from MIT.
 #
-#
-DATE = "11/3/09"
+#Altered by Capo to output gcode with the '.gcode' extension as opposed to '.g'
+#and to work with a solenoid/Laser cutter.
+#For more information see  http://capolight.wordpress.com/2012/04/29/converting_images_to_gcode/printers
+DATE = "29/04/2012"
 
 from numpy import *
 import scipy.signal.signaltools
@@ -59,12 +61,12 @@ class cad_variables:
       self.image_min = 0 # image min value
       self.image_max = 0 # image max value
       self.stop = 0 # stop rendering
-      self.nplot = 400 # plot window size
-      self.inches_per_unit = 1.0 # file units
+      self.nplot = 200 # plot window size
+      self.inches_per_unit = 1 # file units
       self.views = 'xyzr'
       self.cam = '' # CAM export type
-      self.editor_width = 45 # editor width
-      self.editor_height = 40 # editor height
+      self.editor_width = 30 # editor width
+      self.editor_height = 10 # editor height
    def view(self,arg):
       global canvas_xy,canvas_yz,canvas_xz,canvas_xyz
       if (arg == 'xy'):
@@ -1174,12 +1176,12 @@ def image_load(event):
    string_image_ymin.set('0')
    cad.ymax = cad.ny/float(ydpi)
    string_image_yheight.set(str(cad.ymax-cad.ymin))
-   cad.zmin = 0
-   string_image_zmin.set('0')
-   cad.zmax = 0.01
-   string_image_zmax.set('0.01')
+   cad.zmin = -.005
+   string_image_zmin.set('-0.05')
+   cad.zmax = 0.05
+   string_image_zmax.set('0.05')
    cad.inches_per_unit = 1.0
-   string_image_units.set('1.0')
+   string_image_units.set('25.4')
    data = zeros((num_layers,cad.nx*cad.ny,3),uint32)
    data[0,] = array(image.convert("RGB").getdata(),uint32)
    for layer in range(1,num_layers):
@@ -1670,18 +1672,18 @@ def select_ord():
 
 def select_g():
    input_file_name = string_input_file.get()
-   string_cam_file.set(input_file_name[0:-4]+'.g')
+   string_cam_file.set(input_file_name[0:-4]+'.gcode')
    cad.cam = 'g'
    cam_pack_forget()
    cam_file_frame.pack()
    cam_vector_frame.pack()
-   string_tool_dia.set("0.125")
+   string_tool_dia.set("0.03")
    cam_dia_frame.pack()
    cam_contour_frame.pack()
-   string_g_feed_rate.set("5")
+   string_g_feed_rate.set("20")
    string_g_spindle_speed.set("5000")
    string_g_tool.set("1")
-   integer_g_cool.set("1")
+   integer_g_cool.set("0")
    g_frame.pack()
    root.update()
 
@@ -2043,6 +2045,9 @@ def write_ord():
    string_msg.set("wrote %s"%filename)
    root.update()
 
+def distance(x1, y1, x2, y2):
+   return sqrt((x1-x2)**2+(y1-y2)**2)
+
 def write_G():
    #
    # G code output
@@ -2057,13 +2062,12 @@ def write_G():
       cad.zwrite = [cad.zmin]
    filename = string_cam_file.get()
    file = open(filename, 'wb')
-   file.write("T%dM06\n"%tool) # tool selection, tool change
-   file.write("G90\n") # absolute positioning
-   file.write("F%0.4f\n"%feed_rate) # feed rate
-   file.write("S%0.4f\n"%spindle_speed) # spindle speed
-   if (coolant == 1): file.write("M08\n") # coolant on
-   file.write("G00Z%0.4f\n"%zup) # move up before starting spindle
-   file.write("M03\n") # spindle on clockwise
+   file.write("""(---------------------------------------------------------------)
+(---------------------------------------------------------------)
+(Start of sheet header)
+G21 (metric)
+G92 X0 Y0 Z0 (zero all axes)
+(End of sheet header)\n""")
    dxy = 0
    dz = 0
    xold = 0
@@ -2073,29 +2077,70 @@ def write_G():
       #
       # follow toolpaths CCW, for CW tool motion
       #
-      for segment in range(len(cad.toolpaths[layer])):      
-         x = units*(cad.xmin + (cad.xmax-cad.xmin)*(cad.toolpaths[layer][segment][0].x+0.5)/float(cad.nx))
-         y = units*(cad.ymin + (cad.ymax-cad.ymin)*((cad.ny-cad.toolpaths[layer][segment][0].y)+0.5)/float(cad.ny))
-         file.write("G00X%0.4f"%x+"Y%0.4f"%y+"Z%0.4f"%zup+"\n") # rapid motion
-         file.write("G01Z%0.4f"%zdown+"\n") # linear motion
+      unsorted_segments = cad.toolpaths[layer]
+      sorted_segments = []
+      if len(unsorted_segments) > 0:
+         sorted_segments.append(unsorted_segments.pop(0)) #starts with the first path in the list
+      else:
+         print "empty path --- strange"
+
+      while len(unsorted_segments) > 0:
+         #find closest start to the the last sorted segment start
+         min_dist = 99999
+         min_dist_index = None
+         for i in range(len(unsorted_segments)):
+            dist = distance(sorted_segments[-1][0].x, sorted_segments[-1][0].y,
+                            unsorted_segments[i][0].x, unsorted_segments[i][0].y)
+            if dist < min_dist:
+               min_dist = dist
+               min_dist_index = i
+
+         #print "min_dist: %d index: %d" % (min_dist, min_dist_index)
+         sorted_segments.append(unsorted_segments.pop(min_dist_index))
+
+      for segment in range(len(sorted_segments)):
+      
+         x = units*(cad.xmin + (cad.xmax-cad.xmin)*(sorted_segments[segment][0].x+0.5)/float(cad.nx))
+         y = units*(cad.ymin + (cad.ymax-cad.ymin)*((cad.ny-sorted_segments[segment][0].y)+0.5)/float(cad.ny))
+         file.write("M106 S255 (Pen Up)\n")
+         file.write("G4 P120\n")    
+         file.write("G1 X%0.4f "%x+"Y%0.4f "%y+" F2000.00\n") # rapid motion
+         file.write("M107 (Pen Down)\n") # linear motion
+         file.write("G4 P120\n")   
          dxy += sqrt((xold-x)**2+(yold-y)**2)
          xold = x
          yold = y
          dz += zup-zdown
-         for vertex in range(1,len(cad.toolpaths[layer][segment])):
-            x = units*(cad.xmin + (cad.xmax-cad.xmin)*(cad.toolpaths[layer][segment][vertex].x+0.5)/float(cad.nx))
-            y = units*(cad.ymin + (cad.ymax-cad.ymin)*((cad.ny-cad.toolpaths[layer][segment][vertex].y)+0.5)/float(cad.ny))
-            file.write("X%0.4f"%x+"Y%0.4f"%y+"\n")
+         for vertex in range(1,len(sorted_segments[segment])):
+            x = units*(cad.xmin + (cad.xmax-cad.xmin)*(sorted_segments[segment][vertex].x+0.5)/float(cad.nx))
+            y = units*(cad.ymin + (cad.ymax-cad.ymin)*((cad.ny-sorted_segments[segment][vertex].y)+0.5)/float(cad.ny))
+            file.write("G1 X%0.4f "%x+"Y%0.4f"%y+" F2000.00\n")
             dxy += sqrt((xold-x)**2+(yold-y)**2)
             xold = x
             yold = y
-         file.write("Z%0.4f\n"%zup)
-   file.write("G00Z%0.4f\n"%zup) # move up before stopping spindle
-   file.write("M05\n") # spindle stop
-   if (coolant == 1): file.write("M09\n") # coolant off
-   file.write("M30\n") # program end and reset
+   file.write("""(Start of sheet footer.)
+M106 (Pen Up)
+G4 P120 (wait 120ms)
+G0 X0 Y0 Z15 F3500.00 (go to position for retrieving platform -- increase Z to Z25 or similar if you have trouble avoiding tool)
+G4 P300 (wait 300ms)
+G0 Z0 F3500.00 (return to start position of current sheet)
+
+G4 P300 (wait 300ms)
+M18 (disengage drives)
+(End of sheet footer)
+
+M01 (Printing on the next sheet?)
+(yes, if dropping the default .1 mm to next sheet; no, if you will print again on same sheet)
+G0 Z-0.10 F3500.00 (drop 0.1mm to next sheet)
+M107 (Pen Down so as not to overheat solenoid)
+
+(Paste in further sheets below)
+(---------------------------------------------------------------)
+(---------------------------------------------------------------)
+""")
    file.close()
-   time = (dxy/feed_rate + dz/feed_rate)/60.0
+   print "Path length: %f" % dxy
+   time = (dxy/feed_rate + dz/feed_rate)
    string_send_to_time.set(" estimated time: %.1f minutes"%time)
    draw_toolpath()
    string_msg.set("wrote %s"%filename)
@@ -2561,19 +2606,19 @@ def write_excellon():
    # Excellon (RS-) output
    #
    """
-%     Rewind and Stop
-X#Y#  Move and Drill
-T#    Tool Selection
-M30   End of Program
-M00   End of Program
-R#X#Y#   Repeat Hole
-G05, G81    Select Drill Mode
-G90   Absolute Mode
-G91   Incremental Mode
-G92 X#Y#    Set Zero
-G93 X#Y#    Set Zero
-M48   Program Header to first "%"
-M72   English-Imperial Mode
+%  	Rewind and Stop
+X#Y# 	Move and Drill
+T# 	Tool Selection
+M30 	End of Program
+M00 	End of Program
+R#X#Y# 	Repeat Hole
+G05, G81 	Select Drill Mode
+G90 	Absolute Mode
+G91 	Incremental Mode
+G92 X#Y# 	Set Zero
+G93 X#Y# 	Set Zero
+M48 	Program Header to first "%"
+M72 	English-Imperial Mode
 
    """
    filename = string_cam_file.get()
@@ -3079,7 +3124,7 @@ widget_cam_menu.add_command(label='.epi (Epilog)',command=select_epi)
 widget_cam_menu.add_command(label='.camm (CAMM)',command=select_camm)
 widget_cam_menu.add_command(label='.rml (Modela)',command=select_rml)
 widget_cam_menu.add_command(label='.sbp (ShopBot)',command=select_sbp)
-widget_cam_menu.add_command(label='.g (G codes)',command=select_g)
+widget_cam_menu.add_command(label='.gcode (Gcode)',command=select_g)
 widget_cam_menu.add_command(label='.ps (Postscript)',command=select_ps)
 widget_cam_menu.add_command(label='.ord (OMAX)',command=select_ord)
 widget_cam_menu.add_command(label='.oms (Resonetics)',command=select_oms)
